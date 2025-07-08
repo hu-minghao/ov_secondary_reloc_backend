@@ -6,6 +6,9 @@ set(CMAKE_CXX_FLAGS "-std=c++11")
 #-DEIGEN_USE_MKL_ALL")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 
+# set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} -fsanitize=leak -g -O0")
+# set(CMAKE_LINKER_FLAGS "${CMAKE_LINKER_FLAGS} -fsanitize=leak")
+
 find_package(catkin REQUIRED COMPONENTS
     roscpp
     std_msgs
@@ -13,10 +16,12 @@ find_package(catkin REQUIRED COMPONENTS
     camera_models
     cv_bridge
     roslib
+    tf
     )
 
 
-find_package(OpenCV 3 REQUIRED)
+#find_package(OpenCV 3 REQUIRED)
+find_package(OpenCV REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(Eigen3)
 
