@@ -27,6 +27,7 @@ PoseGraph::PoseGraph()
     sequence_loop.push_back(0);
     base_sequence = 1;
     use_imu = 0;
+    pre_key_pose_.time_ = -1;
 }
 
 PoseGraph::~PoseGraph()
@@ -79,12 +80,15 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
     // shift to base frame
     Vector3d vio_P_cur;
     Matrix3d vio_R_cur;
+    // initial
     if (sequence_cnt != cur_kf->sequence)
     {
         sequence_cnt++;
         sequence_loop.push_back(0);
+        // 该轨迹段的坐标系相对于世界坐标系的初始变换
         w_t_vio = Eigen::Vector3d(0, 0, 0);
         w_r_vio = Eigen::Matrix3d::Identity();
+        // 当前轨迹段相对于全局地图的漂移量
         m_drift.lock();
         t_drift = Eigen::Vector3d(0, 0, 0);
         r_drift = Eigen::Matrix3d::Identity();
@@ -92,6 +96,7 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
     }
 
     cur_kf->getVioPose(vio_P_cur, vio_R_cur);
+    // 漂移补偿作用
     vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;
     vio_R_cur = w_r_vio * vio_R_cur;
     cur_kf->updateVioPose(vio_P_cur, vio_R_cur);
@@ -142,6 +147,8 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
             // shift vio pose of whole sequence to the world frame
             if (old_kf->sequence != cur_kf->sequence && sequence_loop[cur_kf->sequence] == 0)
             {
+                relocalization = !isMappingMode();
+                printf("relocalization success\n");
                 w_r_vio = shift_r;
                 w_t_vio = shift_t;
                 vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;
@@ -242,10 +249,13 @@ void PoseGraph::addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
         }
     }
     // posegraph_visualization->add_pose(P + Vector3d(VISUALIZATION_SHIFT_X, VISUALIZATION_SHIFT_Y, 0), Q);
-
-    keyframelist.push_back(cur_kf);
+    if (SysMode::kMAPPING == mode)
+    {
+        keyframelist.push_back(cur_kf);
+    }
     publish();
     m_keyframelist.unlock();
+    printf("system mode %d, relocalization %d \n", mode, relocalization);
 }
 
 void PoseGraph::loadKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop)
@@ -360,7 +370,10 @@ int PoseGraph::detectLoop(KeyFrame *keyframe, int frame_index)
     // cout << "Searching for Image " << frame_index << ". " << ret << endl;
 
     TicToc t_add;
-    db.add(keyframe->brief_descriptors);
+    if (isMappingMode())
+    {
+        db.add(keyframe->brief_descriptors);
+    }
     // printf("[POSEGRAPH]: add feature time: %f", t_add.toc());
     //  ret[0] is the nearest neighbour's score. threshold change with neighour score
     bool find_loop = false;
@@ -1128,6 +1141,18 @@ void PoseGraph::publish()
     // posegraph_visualization->publish_by(pub_pose_graph, path[sequence_cnt].header);
 }
 
+bool PoseGraph::isKeyFrame(const TimedPose &pose)
+{
+    if ((pose.t_ - pre_key_pose_.t_).norm() > 0.04 ||
+        std::fabs(Utility::GetYaw(pre_key_pose_.R_.inverse() * pose.R_)) > 5. * M_PI / 180.0 ||
+        pose.time_ - pre_key_pose_.time_ > 30 || pre_key_pose_.time_ < -1)
+    {
+        pre_key_pose_ = pose;
+        return true;
+    }
+    return false;
+}
+
 void PoseGraph::startTFThread()
 {
     tf_thread = std::thread([this]()
@@ -1152,8 +1177,9 @@ void PoseGraph::pubTFThread()
         {
             // 获取 posegraph 中的漂移信息
             m_drift.lock();
-            Eigen::Quaterniond q(r_drift);
-            Eigen::Vector3d t = t_drift;
+            Eigen::Matrix3d R = r_drift * w_r_vio;
+            Eigen::Vector3d t = r_drift * w_t_vio + t_drift;
+            Eigen::Quaterniond q(R);
             m_drift.unlock();
 
             tf::StampedTransform trans;

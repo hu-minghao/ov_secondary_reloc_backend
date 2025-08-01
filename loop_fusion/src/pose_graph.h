@@ -27,6 +27,7 @@
 #include <stdio.h>
 #include <ros/ros.h>
 #include "keyframe.h"
+#include "parameters.h"
 #include "utility/tic_toc.h"
 #include "utility/utility.h"
 #include "utility/CameraPoseVisualization.h"
@@ -46,6 +47,17 @@ using namespace DBoW2;
 class PoseGraph
 {
 public:
+	struct TimedPose
+	{
+		double time_;
+		Eigen::Vector3d t_;
+		Eigen::Quaterniond R_;
+	};
+	enum class SysMode : int
+	{
+		kLOCALIZATION,
+		kMAPPING
+	};
 	PoseGraph();
 	~PoseGraph();
 	void registerPub(ros::NodeHandle &n);
@@ -56,7 +68,19 @@ public:
 	inline void setDownSampleImage(bool _downsample_image)
 	{
 		downsample_image = _downsample_image;
-	};
+	}
+	inline void setMode(const SysMode &_mode) { mode = _mode; }
+	SysMode Mode() const { return mode; }
+	inline void setCurrImgPose(const TimedPose &_pose)
+	{
+		curr_img_pose_ = _pose;
+	}
+	inline bool isMappingMode() const
+	{
+		return SysMode::kMAPPING == mode;
+	}
+	TimedPose CurrImgPose() const { return curr_img_pose_; }
+	bool isKeyFrame(const TimedPose &pose);
 	KeyFrame *getKeyFrame(int index);
 	nav_msgs::Path path[10];
 	nav_msgs::Path base_path;
@@ -71,6 +95,7 @@ public:
 	// world frame( base sequence or first sequence)<----> cur sequence frame
 	Vector3d w_t_vio;
 	Matrix3d w_r_vio;
+	bool relocalization = false;
 
 private:
 	int detectLoop(KeyFrame *keyframe, int frame_index);
@@ -106,6 +131,9 @@ private:
 	ros::Publisher pub_path[10];
 
 	std::thread tf_thread;
+	SysMode mode = SysMode::kMAPPING;
+	TimedPose pre_key_pose_;
+	TimedPose curr_img_pose_;
 };
 
 template <typename T>

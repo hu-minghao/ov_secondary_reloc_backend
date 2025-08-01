@@ -1,8 +1,8 @@
 /*******************************************************
  * Copyright (C) 2019, Aerial Robotics Group, Hong Kong University of Science and Technology
- * 
+ *
  * This file is part of VINS.
- * 
+ *
  * Licensed under the GNU General Public License v3.0;
  * you may not use this file except in compliance with the License.
  *******************************************************/
@@ -16,7 +16,7 @@
 
 class Utility
 {
-  public:
+public:
     template <typename Derived>
     static Eigen::Quaternion<typename Derived::Scalar> deltaQ(const Eigen::MatrixBase<Derived> &theta)
     {
@@ -45,10 +45,10 @@ class Utility
     template <typename Derived>
     static Eigen::Quaternion<typename Derived::Scalar> positify(const Eigen::QuaternionBase<Derived> &q)
     {
-        //printf("a: %f %f %f %f", q.w(), q.x(), q.y(), q.z());
-        //Eigen::Quaternion<typename Derived::Scalar> p(-q.w(), -q.x(), -q.y(), -q.z());
-        //printf("b: %f %f %f %f", p.w(), p.x(), p.y(), p.z());
-        //return q.template w() >= (typename Derived::Scalar)(0.0) ? q : Eigen::Quaternion<typename Derived::Scalar>(-q.w(), -q.x(), -q.y(), -q.z());
+        // printf("a: %f %f %f %f", q.w(), q.x(), q.y(), q.z());
+        // Eigen::Quaternion<typename Derived::Scalar> p(-q.w(), -q.x(), -q.y(), -q.z());
+        // printf("b: %f %f %f %f", p.w(), p.x(), p.y(), p.z());
+        // return q.template w() >= (typename Derived::Scalar)(0.0) ? q : Eigen::Quaternion<typename Derived::Scalar>(-q.w(), -q.x(), -q.y(), -q.z());
         return q;
     }
 
@@ -137,13 +137,22 @@ class Utility
     }
 
     template <typename T>
-    static T normalizeAngle(const T& angle_degrees) {
-      T two_pi(2.0 * 180);
-      if (angle_degrees > 0)
-      return angle_degrees -
-          two_pi * std::floor((angle_degrees + T(180)) / two_pi);
-      else
-        return angle_degrees +
-            two_pi * std::floor((-angle_degrees + T(180)) / two_pi);
+    static T normalizeAngle(const T &angle_degrees)
+    {
+        T two_pi(2.0 * 180);
+        if (angle_degrees > 0)
+            return angle_degrees -
+                   two_pi * std::floor((angle_degrees + T(180)) / two_pi);
+        else
+            return angle_degrees +
+                   two_pi * std::floor((-angle_degrees + T(180)) / two_pi);
     };
+
+    template <typename T>
+    static T GetYaw(const Eigen::Quaternion<T> &rotation)
+    {
+        const Eigen::Matrix<T, 3, 1> direction =
+            rotation * Eigen::Matrix<T, 3, 1>::UnitX();
+        return std::atan2(direction.y(), direction.x());
+    }
 };

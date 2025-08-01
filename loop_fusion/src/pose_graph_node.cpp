@@ -137,13 +137,17 @@ void point_callback(const sensor_msgs::PointCloudConstPtr &point_msg)
     ROS_INFO("point_callback! timestamp %f", point_msg->header.stamp.toSec());
     m_buf.lock();
     const double curr_pt_time = point_msg->header.stamp.toSec();
-    if (point_buf.empty() || (!point_buf.empty() && std::fabs(curr_pt_time - point_buf.back()->header.stamp.toSec()) > 1e-5))
-    {
-        point_buf.push(point_msg);
-    }
+    // if (point_buf.empty() || (!point_buf.empty() && std::fabs(curr_pt_time - point_buf.back()->header.stamp.toSec()) > 1e-5))
+    // {
+    //     point_buf.push(point_msg);
+    // }
+    point_buf.push(point_msg);
+    ROS_INFO("point_callback! point buf size %zu, curr_pt_time %f, front time %f", point_buf.size(), curr_pt_time, point_buf.front()->header.stamp.toSec());
+
     while (curr_pt_time - point_buf.front()->header.stamp.toSec() > 3.0)
     {
         point_buf.pop();
+        ROS_INFO("point buf pop");
     }
     m_buf.unlock();
     /*
@@ -456,12 +460,15 @@ void process()
             Vector3d T = Vector3d(pose_msg->pose.pose.position.x,
                                   pose_msg->pose.pose.position.y,
                                   pose_msg->pose.pose.position.z);
-            Matrix3d R = Quaterniond(pose_msg->pose.pose.orientation.w,
-                                     pose_msg->pose.pose.orientation.x,
-                                     pose_msg->pose.pose.orientation.y,
-                                     pose_msg->pose.pose.orientation.z)
-                             .toRotationMatrix();
-            if ((T - last_t).norm() > SKIP_DIS)
+            Quaterniond q(pose_msg->pose.pose.orientation.w,
+                          pose_msg->pose.pose.orientation.x,
+                          pose_msg->pose.pose.orientation.y,
+                          pose_msg->pose.pose.orientation.z);
+            Matrix3d R = q.toRotationMatrix();
+            posegraph.setCurrImgPose({point_msg->header.stamp.toSec(), T, q});
+            const bool insert_frame = (posegraph.Mode() == PoseGraph::SysMode::kMAPPING && posegraph.isKeyFrame(posegraph.CurrImgPose())) ||
+                                      posegraph.Mode() == PoseGraph::SysMode::kLOCALIZATION;
+            if (insert_frame)
             {
                 vector<cv::Point3f> point_3d;
                 vector<cv::Point2f> point_2d_uv;
@@ -507,7 +514,6 @@ void process()
                 posegraph.addKeyFrame(keyframe, 1);
                 m_process.unlock();
                 frame_index++;
-                last_t = T;
             }
         }
         std::chrono::milliseconds dura(5);
@@ -612,6 +618,7 @@ int main(int argc, char **argv)
     if (LOAD_PREVIOUS_POSE_GRAPH)
     {
         printf("[POSEGRAPH]: load pose graph\n");
+        posegraph.setMode(PoseGraph::SysMode::kLOCALIZATION);
         m_process.lock();
         posegraph.loadPoseGraph();
         m_process.unlock();
