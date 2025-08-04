@@ -61,8 +61,8 @@ public:
 	PoseGraph();
 	~PoseGraph();
 	void registerPub(ros::NodeHandle &n);
-	void addKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop);
-	void loadKeyFrame(KeyFrame *cur_kf, bool flag_detect_loop);
+	void addKeyFrame(const KeyFramePtr &cur_kf, bool flag_detect_loop);
+	void loadKeyFrame(const KeyFramePtr &cur_kf, bool flag_detect_loop);
 	void loadVocabulary(std::string voc_path);
 	void setIMUFlag(bool _use_imu);
 	inline void setDownSampleImage(bool _downsample_image)
@@ -81,7 +81,7 @@ public:
 	}
 	TimedPose CurrImgPose() const { return curr_img_pose_; }
 	bool isKeyFrame(const TimedPose &pose);
-	KeyFrame *getKeyFrame(int index);
+	KeyFramePtr getKeyFrame(int index);
 	nav_msgs::Path path[10];
 	nav_msgs::Path base_path;
 	CameraPoseVisualization *posegraph_visualization;
@@ -98,13 +98,13 @@ public:
 	bool relocalization = false;
 
 private:
-	int detectLoop(KeyFrame *keyframe, int frame_index);
-	void addKeyFrameIntoVoc(KeyFrame *keyframe);
+	int detectLoop(const KeyFramePtr &keyframe, int frame_index);
+	void addKeyFrameIntoVoc(const KeyFramePtr &keyframe);
 	void optimize4DoF();
 	void optimize6DoF();
 	void updatePath();
 	void pubTFThread();
-	list<KeyFrame *> keyframelist;
+	list<KeyFramePtr> keyframelist;
 	std::mutex m_keyframelist;
 	std::mutex m_optimize_buf;
 	std::mutex m_path;

@@ -6,7 +6,7 @@
 
 
     <node name="loop_fusion_node" pkg="loop_fusion" type="loop_fusion_node" output="screen" args="$(arg config_path)" required="true">
-        <!--    <node name="loop_fusion_node" pkg="loop_fusion" type="loop_fusion_node" output="screen" args="$(arg config_path)" required="true" launch-prefix="gdb -ex run &#45;&#45;args">-->
+    <!-- <node name="loop_fusion_node" pkg="loop_fusion" type="loop_fusion_node" output="screen" args="$(arg config_path)" required="true" launch-prefix="gdb -ex run &#45;&#45;args"> -->
         <!-- <env name="HEAPTRACK_OUTPUT" value="/home/wheeltec/catkin_ov_ws/debug_output/"/> -->
         <!-- INPUT: keyframe poses / marginalized poses -->
         <remap from="/cam0/image_raw" to="/camera/fisheye1/image_raw"/>

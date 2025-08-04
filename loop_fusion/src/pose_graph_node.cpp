@@ -496,17 +496,17 @@ void process()
 
                     // printf("[POSEGRAPH]: u %f, v %f \n", p_2d_uv.x, p_2d_uv.y);
                 }
-                KeyFrame *keyframe;
+                KeyFramePtr keyframe;
                 if (DOWNSAMPLE_IMAGE)
                 {
                     cv::Mat img_temp;
                     cv::pyrDown(image, img_temp, cv::Size(image.cols / 2.0, image.rows / 2.0));
-                    keyframe = new KeyFrame(pose_msg->header.stamp.toSec(), frame_index, T, R, img_temp,
+                    keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, img_temp,
                                             point_3d, point_2d_uv, point_2d_normal, point_id, sequence);
                 }
                 else
                 {
-                    keyframe = new KeyFrame(pose_msg->header.stamp.toSec(), frame_index, T, R, image,
+                    keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, image,
                                             point_3d, point_2d_uv, point_2d_normal, point_id, sequence);
                 }
                 m_process.lock();

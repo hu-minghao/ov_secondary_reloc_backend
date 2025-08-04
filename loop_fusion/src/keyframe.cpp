@@ -149,28 +149,38 @@ bool KeyFrame::searchInAera(const BRIEF::bitset window_descriptor,
                             cv::Point2f &best_match,
                             cv::Point2f &best_match_norm)
 {
-    cv::Point2f best_pt;
     int bestDist = 128;
+    int secondBestDist = 128;
     int bestIndex = -1;
+	std::vector<bool> matched_flag((int)descriptors_old.size(),false);
+
     for(int i = 0; i < (int)descriptors_old.size(); i++)
     {
+        if (matched_flag[i]) continue; // 已匹配，跳过
 
         int dis = HammingDis(window_descriptor, descriptors_old[i]);
+
         if(dis < bestDist)
         {
+            secondBestDist = bestDist;
             bestDist = dis;
             bestIndex = i;
         }
+        else if(dis < secondBestDist)
+        {
+            secondBestDist = dis;
+        }
     }
-    //printf("[POSEGRAPH]: best dist %d", bestDist);
-    if (bestIndex != -1 && bestDist < 80)
+
+    // 比值约束 + 距离阈值
+    if (bestIndex != -1 && bestDist < 80 && static_cast<float>(bestDist) / secondBestDist < 0.7f)
     {
-      best_match = keypoints_old[bestIndex].pt;
-      best_match_norm = keypoints_old_norm[bestIndex].pt;
-      return true;
+        best_match = keypoints_old[bestIndex].pt;
+        best_match_norm = keypoints_old_norm[bestIndex].pt;
+        matched_flag[bestIndex] = true;  // 标记该点已匹配
+        return true;
     }
-    else
-      return false;
+    return false;
 }
 
 void KeyFrame::searchByBRIEFDes(std::vector<cv::Point2f> &matched_2d_old,
@@ -281,10 +291,10 @@ void KeyFrame::PnPRANSAC(const vector<cv::Point2f> &matched_2d_old_norm,
 }
 
 
-bool KeyFrame::findConnection(KeyFrame* old_kf)
+bool KeyFrame::findConnection(const KeyFramePtr& old_kf)
 {
 	TicToc tmp_t;
-	//printf("[POSEGRAPH]: find Connection\n");
+	printf("[POSEGRAPH]: find Connection\n");
 	vector<cv::Point2f> matched_2d_cur, matched_2d_old;
 	vector<cv::Point2f> matched_2d_cur_norm, matched_2d_old_norm;
 	vector<cv::Point3f> matched_3d;
@@ -337,7 +347,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	        cv::imwrite( path.str().c_str(), loop_match_img);
 	    }
 	#endif
-	//printf("[POSEGRAPH]: search by des\n");
+	printf("[POSEGRAPH]: search by des, matched_2d_old size %zu \n",matched_2d_old.size());
 	searchByBRIEFDes(matched_2d_old, matched_2d_old_norm, status, old_kf->brief_descriptors, old_kf->keypoints, old_kf->keypoints_norm);
 	reduceVector(matched_2d_cur, status);
 	reduceVector(matched_2d_old, status);
@@ -345,7 +355,10 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	reduceVector(matched_2d_old_norm, status);
 	reduceVector(matched_3d, status);
 	reduceVector(matched_id, status);
-	//printf("[POSEGRAPH]: search by des finish\n");
+	printf("[POSEGRAPH]: search by des finish matched_2d_old size %zu \n",matched_2d_old.size());
+	// for(const auto& pt:matched_3d){
+	//	std::cout<<"HMH, 3d curr "<<pt.x<<" "<<pt.y<<" "<<pt.z<<std::endl;
+	// }
 
 	#if 0 
 		if (DEBUG_IMAGE)
@@ -508,7 +521,7 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	        }
 	    #endif
 	}
-
+	printf("HMH,[POSEGRAPH]: loop final use num %d %lf--------------- \n", (int)matched_2d_cur.size(), t_match.toc());
 	if ((int)matched_2d_cur.size() > MIN_LOOP_NUM)
 	{
 	    relative_t = PnP_R_old.transpose() * (origin_vio_T - PnP_T_old);
@@ -517,20 +530,23 @@ bool KeyFrame::findConnection(KeyFrame* old_kf)
 	    //printf("[POSEGRAPH]: PNP relative\n");
 	    //cout << "pnp relative_t " << relative_t.transpose() << endl;
 	    //cout << "pnp relative_yaw " << relative_yaw << endl;
+	printf("HMH,[POSEGRAPH]: abs(relative_yaw)  %f  MAX_THETA_DIFF %f relative_t.norm() %lf MAX_POS_DIFF %f  \n", 
+	        abs(relative_yaw), MAX_THETA_DIFF, relative_t.norm(),MAX_POS_DIFF);
 	    if (abs(relative_yaw) < MAX_THETA_DIFF && relative_t.norm() < MAX_POS_DIFF)
 	    {
+			printf("HMH, add loop info \n");
 
 	    	has_loop = true;
 	    	loop_index = old_kf->index;
 	    	loop_info << relative_t.x(), relative_t.y(), relative_t.z(),
 	    	             relative_q.w(), relative_q.x(), relative_q.y(), relative_q.z(),
 	    	             relative_yaw;
-	    	//cout << "pnp relative_t " << relative_t.transpose() << endl;
-	    	//cout << "pnp relative_q " << relative_q.w() << " " << relative_q.vec().transpose() << endl;
+	    	cout << "pnp relative_t " << relative_t.transpose() << endl;
+	    	cout << "pnp relative_q " << relative_q.w() << " " << relative_q.vec().transpose() << endl;
 	        return true;
 	    }
 	}
-	//printf("[POSEGRAPH]: loop final use num %d %lf--------------- \n", (int)matched_2d_cur.size(), t_match.toc());
+	// printf("HMH,[POSEGRAPH]: loop final use num %d %lf--------------- end \n", (int)matched_2d_cur.size(), t_match.toc());
 	return false;
 }
 
