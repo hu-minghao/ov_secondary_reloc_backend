@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 2.8.3)
 project(loop_fusion)
 
 set(CMAKE_BUILD_TYPE "Release")
-set(CMAKE_CXX_FLAGS "-std=c++11")
+set(CMAKE_CXX_FLAGS "-std=c++14")
 #-DEIGEN_USE_MKL_ALL")
 set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall -g")
 
@@ -17,6 +17,8 @@ find_package(catkin REQUIRED COMPONENTS
     cv_bridge
     roslib
     tf
+    pcl_conversions
+    pcl_ros
     )
 
 
@@ -24,8 +26,12 @@ find_package(catkin REQUIRED COMPONENTS
 find_package(OpenCV REQUIRED)
 find_package(Ceres REQUIRED)
 find_package(Eigen3)
+# 查找 PCL
+find_package(PCL REQUIRED COMPONENTS common io visualization)
+find_package(VTK REQUIRED)
 
-include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS}  ${EIGEN3_INCLUDE_DIR})
+include_directories(${catkin_INCLUDE_DIRS} ${CERES_INCLUDE_DIRS}  ${EIGEN3_INCLUDE_DIR} ${PCL_INCLUDE_DIRS} ${VTK_INCLUDE_DIRS})
+# add_definitions(${PCL_DEFINITIONS})
 
 catkin_package()
 
@@ -45,4 +51,4 @@ add_executable(loop_fusion_node
     src/ThirdParty/VocabularyBinary.cpp
     )
 
-target_link_libraries(loop_fusion_node ${catkin_LIBRARIES}  ${OpenCV_LIBS} ${CERES_LIBRARIES}) 
+target_link_libraries(loop_fusion_node ${catkin_LIBRARIES}  ${OpenCV_LIBS} ${CERES_LIBRARIES}  ${VTK_LIBRARIES} pcl_common pcl_io pcl_visualization) 

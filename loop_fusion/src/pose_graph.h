@@ -13,6 +13,7 @@
 
 #include <thread>
 #include <mutex>
+#include <atomic>
 #include <opencv2/opencv.hpp>
 #include <eigen3/Eigen/Dense>
 #include <string>
@@ -79,6 +80,13 @@ public:
 	{
 		return SysMode::kMAPPING == mode;
 	}
+
+	inline void SetRelocation(const bool _relocation) {
+		relocation_ = _relocation;
+	}
+	inline bool Relocalization() const {
+		return relocation_;
+	}
 	TimedPose CurrImgPose() const { return curr_img_pose_; }
 	bool isKeyFrame(const TimedPose &pose);
 	KeyFramePtr getKeyFrame(int index);
@@ -89,13 +97,13 @@ public:
 	void loadPoseGraph();
 	void publish();
 	void startTFThread();
+	void SetThreadStop(const bool _stop){ stop_.store(_stop);}
 	Vector3d t_drift;
 	double yaw_drift;
 	Matrix3d r_drift;
 	// world frame( base sequence or first sequence)<----> cur sequence frame
 	Vector3d w_t_vio;
 	Matrix3d w_r_vio;
-	bool relocalization = false;
 
 private:
 	int detectLoop(const KeyFramePtr &keyframe, int frame_index);
@@ -124,16 +132,20 @@ private:
 
 	BriefDatabase db;
 	BriefVocabulary *voc;
+	std::unordered_map<int, cv::Point3f> id_point_map;
 
 	ros::Publisher pub_pg_path;
 	ros::Publisher pub_base_path;
 	ros::Publisher pub_pose_graph;
 	ros::Publisher pub_path[10];
+	ros::Publisher pub_map_points;
 
 	std::thread tf_thread;
 	SysMode mode = SysMode::kMAPPING;
 	TimedPose pre_key_pose_;
 	TimedPose curr_img_pose_;
+	bool relocation_ = false;
+	std::atomic<bool> stop_{false};
 };
 
 template <typename T>

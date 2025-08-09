@@ -54,24 +54,29 @@ public:
 			 vector<double> &_point_id, int _sequence);
 	KeyFrame(double _time_stamp, int _index, Vector3d &_vio_T_w_i, Matrix3d &_vio_R_w_i, Vector3d &_T_w_i, Matrix3d &_R_w_i,
 			 cv::Mat &_image, int _loop_index, Eigen::Matrix<double, 8, 1 > &_loop_info,
-			 vector<cv::KeyPoint> &_keypoints, vector<cv::KeyPoint> &_keypoints_norm, vector<BRIEF::bitset> &_brief_descriptors);
+			 vector<cv::Point2f> &_keypoints, vector<cv::Point2f> &_keypoints_norm, vector<BRIEF::bitset> &_brief_descriptors, 
+			 vector<cv::Point3f> _point_3d = {});
+	KeyFrame(double _time_stamp, int _index, Vector3d &_vio_T_w_i, Matrix3d &_vio_R_w_i, cv::Mat &_image,
+		           int _sequence);
 	bool findConnection(const KeyFramePtr& old_kf);
 	void computeWindowBRIEFPoint();
 	void computeBRIEFPoint();
+	void computeInitialBRIEFPoint();
 	//void extractBrief();
 	int HammingDis(const BRIEF::bitset &a, const BRIEF::bitset &b);
 	bool searchInAera(const BRIEF::bitset window_descriptor,
-	                  const std::vector<BRIEF::bitset> &descriptors_old,
-	                  const std::vector<cv::KeyPoint> &keypoints_old,
-	                  const std::vector<cv::KeyPoint> &keypoints_old_norm,
-	                  cv::Point2f &best_match,
-	                  cv::Point2f &best_match_norm);
-	void searchByBRIEFDes(std::vector<cv::Point2f> &matched_2d_old,
-						  std::vector<cv::Point2f> &matched_2d_old_norm,
-                          std::vector<uchar> &status,
-                          const std::vector<BRIEF::bitset> &descriptors_old,
-                          const std::vector<cv::KeyPoint> &keypoints_old,
-                          const std::vector<cv::KeyPoint> &keypoints_old_norm);
+                            const std::vector<BRIEF::bitset> &descriptors_cur,
+                            const std::vector<cv::KeyPoint> &keypoints_normal_cur,
+                            const std::vector<cv::KeyPoint> &keypoints_cur,
+                            cv::Point2f &best_match_normal,
+							cv::Point2f &best_match,
+							std::vector<bool> &matched_flag);
+	void searchByBRIEFDes(std::vector<cv::Point2f> &matched_2d_normal_cur,
+                                std::vector<cv::Point2f> &matched_2d_cur,
+                                std::vector<uchar> &status,
+                                const std::vector<BRIEF::bitset> &window_descriptors_old,
+                                const std::vector<cv::KeyPoint> &keypoints_2d_norm,
+								const std::vector<cv::KeyPoint> &keypoints);
 	void FundmantalMatrixRANSAC(const std::vector<cv::Point2f> &matched_2d_cur_norm,
                                 const std::vector<cv::Point2f> &matched_2d_old_norm,
                                 vector<uchar> &status);
@@ -117,5 +122,7 @@ public:
 	bool has_loop;
 	int loop_index;
 	Eigen::Matrix<double, 8, 1 > loop_info;
+	// use in localization mode
+	bool insert_flag_ = false;
 };
 

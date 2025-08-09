@@ -81,6 +81,7 @@ std::string VINS_RESULT_PATH;
 CameraPoseVisualization cameraposevisual(1, 0, 0, 1);
 Eigen::Vector3d last_t(-100, -100, -100);
 double last_image_time = -1;
+bool exit_flag = false;
 
 ros::Publisher pub_point_cloud, pub_margin_cloud;
 
@@ -367,47 +368,78 @@ void intrinsics_callback(const sensor_msgs::CameraInfo::ConstPtr &msg)
 
 void process()
 {
-    while (true)
+    while (true && !exit_flag)
     {
         sensor_msgs::ImageConstPtr image_msg = NULL;
         sensor_msgs::PointCloudConstPtr point_msg = NULL;
         nav_msgs::Odometry::ConstPtr pose_msg = NULL;
 
-        // find out the messages with same time stamp
         m_buf.lock();
-        printf("[POSEGRAPH]: ----------------------------------- \n");
-        printf("[POSEGRAPH]:  pose buf size %zu \n", pose_buf.size());
-        printf("[POSEGRAPH]:  point buf size %zu \n", point_buf.size());
-        printf("[POSEGRAPH]:  image buf size %zu \n", image_buf.size());
-        if (!image_buf.empty() && !point_buf.empty() && !pose_buf.empty())
-        {
-            if (image_buf.front()->header.stamp.toSec() > pose_buf.front()->header.stamp.toSec())
+        // printf("[POSEGRAPH]: ----------------------------------- \n");
+        // printf("[POSEGRAPH]:  pose buf size %zu front timestamp %f \n", pose_buf.size(), pose_buf.empty()? -1: pose_buf.front()->header.stamp.toSec());
+        // printf("[POSEGRAPH]:  point buf size %zu \n", point_buf.size());
+        // printf("[POSEGRAPH]:  image buf size %zu front timestamp %f \n", image_buf.size(),image_buf.empty()?-1:image_buf.front()->header.stamp.toSec());
+        if(posegraph.isMappingMode()){
+            if (!image_buf.empty() && !point_buf.empty() && !pose_buf.empty())
             {
-                pose_buf.pop();
-                printf("[POSEGRAPH]: throw pose at beginning\n");
-            }
-            else if (image_buf.front()->header.stamp.toSec() > point_buf.front()->header.stamp.toSec())
-            {
-                point_buf.pop();
-                printf("[POSEGRAPH]: throw point at beginning\n");
-            }
-            else if (image_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec() && point_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec())
-            {
-                // pose in middle of image and points
-                pose_msg = pose_buf.front();
-                pose_buf.pop();
-                while (!pose_buf.empty())
+                if (image_buf.front()->header.stamp.toSec() > pose_buf.front()->header.stamp.toSec())
+                {
                     pose_buf.pop();
-                // clear image later than pose
-                while (image_buf.front()->header.stamp.toSec() < pose_msg->header.stamp.toSec())
-                    image_buf.pop();
-                image_msg = image_buf.front();
-                image_buf.pop();
-                // clear point later than pose
-                while (point_buf.front()->header.stamp.toSec() < pose_msg->header.stamp.toSec())
+                    printf("[POSEGRAPH]: throw pose at beginning\n");
+                }
+                else if (image_buf.front()->header.stamp.toSec() > point_buf.front()->header.stamp.toSec())
+                {
                     point_buf.pop();
-                point_msg = point_buf.front();
-                point_buf.pop();
+                    printf("[POSEGRAPH]: throw point at beginning\n");
+                }
+                else if (image_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec() && point_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec())
+                {
+                    pose_msg = pose_buf.front();
+                    pose_buf.pop();
+                    while (!pose_buf.empty())
+                        pose_buf.pop();
+                    while (image_buf.front()->header.stamp.toSec() < pose_msg->header.stamp.toSec())
+                        image_buf.pop();
+                    image_msg = image_buf.front();
+                    image_buf.pop();
+
+                    while (point_buf.front()->header.stamp.toSec() < pose_msg->header.stamp.toSec())
+                        point_buf.pop();
+                    point_msg = point_buf.front();
+                    point_buf.pop();
+                }
+            }
+        }else{
+            if (!image_buf.empty() && !pose_buf.empty())
+            {
+                if (image_buf.front()->header.stamp.toSec() > pose_buf.front()->header.stamp.toSec())
+                {
+                    pose_buf.pop();
+                    printf("[POSEGRAPH]: throw pose at beginning\n");
+                } 
+                else if (!point_buf.empty() && image_buf.front()->header.stamp.toSec() > point_buf.front()->header.stamp.toSec())
+                {
+                    point_buf.pop();
+                    printf("[POSEGRAPH]: throw point at beginning\n");
+                } 
+                else if (image_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec() && 
+                        (point_buf.empty() || (!point_buf.empty() && point_buf.back()->header.stamp.toSec() >= pose_buf.front()->header.stamp.toSec())))
+                {
+                    pose_msg = pose_buf.front();
+                    pose_buf.pop();
+                    while (!pose_buf.empty())
+                        pose_buf.pop();
+                    while (image_buf.front()->header.stamp.toSec() < pose_msg->header.stamp.toSec())
+                        image_buf.pop();
+                    image_msg = image_buf.front();
+                    image_buf.pop();
+                    while (!point_buf.empty() && point_buf.front()->header.stamp.toSec() < pose_msg->header.stamp.toSec())
+                        point_buf.pop();
+                    if(!point_buf.empty()){
+                        point_msg = point_buf.front();
+                        point_buf.pop();
+                    }
+                }
             }
         }
         m_buf.unlock();
@@ -415,11 +447,10 @@ void process()
         if (pose_msg != NULL)
         {
             printf("[POSEGRAPH]:  pose time %f \n", pose_msg->header.stamp.toSec());
-            printf("[POSEGRAPH]:  point time %f \n", point_msg->header.stamp.toSec());
+            if(point_msg != NULL){
+                printf("[POSEGRAPH]:  point time %f \n", point_msg->header.stamp.toSec());
+            }
             printf("[POSEGRAPH]:  image time %f \n", image_msg->header.stamp.toSec());
-            // printf("[POSEGRAPH]:  pose buf size %zu \n", pose_buf.size());
-            // printf("[POSEGRAPH]:  point buf size %zu \n", point_buf.size());
-            // printf("[POSEGRAPH]:  image buf size %zu \n", image_buf.size());
             //  skip fisrt few
             if (skip_first_cnt < SKIP_FIRST_CNT)
             {
@@ -465,8 +496,9 @@ void process()
                           pose_msg->pose.pose.orientation.y,
                           pose_msg->pose.pose.orientation.z);
             Matrix3d R = q.toRotationMatrix();
-            posegraph.setCurrImgPose({point_msg->header.stamp.toSec(), T, q});
-            const bool insert_frame = (posegraph.Mode() == PoseGraph::SysMode::kMAPPING && posegraph.isKeyFrame(posegraph.CurrImgPose())) ||
+            posegraph.setCurrImgPose({pose_msg->header.stamp.toSec(), T, q});
+            const bool insert_flag = posegraph.isKeyFrame(posegraph.CurrImgPose());
+            const bool insert_frame = (posegraph.Mode() == PoseGraph::SysMode::kMAPPING && insert_flag) ||
                                       posegraph.Mode() == PoseGraph::SysMode::kLOCALIZATION;
             if (insert_frame)
             {
@@ -475,40 +507,53 @@ void process()
                 vector<cv::Point2f> point_2d_normal;
                 vector<double> point_id;
 
-                for (unsigned int i = 0; i < point_msg->points.size(); i++)
-                {
-                    cv::Point3f p_3d;
-                    p_3d.x = point_msg->points[i].x;
-                    p_3d.y = point_msg->points[i].y;
-                    p_3d.z = point_msg->points[i].z;
-                    point_3d.push_back(p_3d);
+                if(point_msg != NULL){
+                    for (unsigned int i = 0; i < point_msg->points.size(); i++)
+                    {
+                        cv::Point3f p_3d;
+                        p_3d.x = point_msg->points[i].x;
+                        p_3d.y = point_msg->points[i].y;
+                        p_3d.z = point_msg->points[i].z;
+                        point_3d.push_back(p_3d);
+                        // printf("origin point 3d: x: %f y: %f z: %f \n",p_3d.x,p_3d.y,p_3d.z);
 
-                    cv::Point2f p_2d_uv, p_2d_normal;
-                    double p_id;
-                    p_2d_normal.x = point_msg->channels[i].values[0];
-                    p_2d_normal.y = point_msg->channels[i].values[1];
-                    p_2d_uv.x = point_msg->channels[i].values[2];
-                    p_2d_uv.y = point_msg->channels[i].values[3];
-                    p_id = point_msg->channels[i].values[4];
-                    point_2d_normal.push_back(p_2d_normal);
-                    point_2d_uv.push_back(p_2d_uv);
-                    point_id.push_back(p_id);
+                        cv::Point2f p_2d_uv, p_2d_normal;
+                        double p_id;
+                        p_2d_normal.x = point_msg->channels[i].values[0];
+                        p_2d_normal.y = point_msg->channels[i].values[1];
+                        p_2d_uv.x = point_msg->channels[i].values[2];
+                        p_2d_uv.y = point_msg->channels[i].values[3];
+                        p_id = point_msg->channels[i].values[4];
+                        point_2d_normal.push_back(p_2d_normal);
+                        point_2d_uv.push_back(p_2d_uv);
+                        point_id.push_back(p_id);
 
-                    // printf("[POSEGRAPH]: u %f, v %f \n", p_2d_uv.x, p_2d_uv.y);
+                        // printf("[POSEGRAPH]: u %f, v %f \n", p_2d_uv.x, p_2d_uv.y);
+                    }
                 }
                 KeyFramePtr keyframe;
                 if (DOWNSAMPLE_IMAGE)
                 {
                     cv::Mat img_temp;
                     cv::pyrDown(image, img_temp, cv::Size(image.cols / 2.0, image.rows / 2.0));
-                    keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, img_temp,
-                                            point_3d, point_2d_uv, point_2d_normal, point_id, sequence);
+                    if(point_2d_uv.empty()){
+                        printf("point 2d uv is empty, make special keyframe %d \n",frame_index);
+                        keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, img_temp,sequence);
+                    }else{
+                        keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, img_temp,
+                                                point_3d, point_2d_uv, point_2d_normal, point_id, sequence);
+                    }
                 }
                 else
                 {
-                    keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, image,
-                                            point_3d, point_2d_uv, point_2d_normal, point_id, sequence);
+                    if(point_2d_uv.empty()){
+                        keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, image,sequence);
+                    }else{
+                        keyframe = std::make_shared<KeyFrame>(pose_msg->header.stamp.toSec(), frame_index, T, R, image,
+                                                point_3d, point_2d_uv, point_2d_normal, point_id, sequence);
+                    }
                 }
+                keyframe->insert_flag_ = insert_flag;
                 m_process.lock();
                 start_flag = 1;
                 posegraph.addKeyFrame(keyframe, 1);
@@ -523,7 +568,7 @@ void process()
 
 void command()
 {
-    while (1)
+    while (1 && !exit_flag)
     {
         char c = getchar();
         if (c == 's')
@@ -533,7 +578,11 @@ void command()
             m_process.unlock();
             printf("[POSEGRAPH]: save pose graph finish\nyou can set 'load_previous_pose_graph' to 1 in the config file to reuse it next time\n");
             printf("[POSEGRAPH]: program shutting down...\n");
-            ros::shutdown();
+            exit_flag  = true;
+            posegraph.SetThreadStop(true);
+            // ros::shutdown();
+            ros::requestShutdown();
+            break;
         }
         if (c == 'n')
             new_sequence();
@@ -605,8 +654,8 @@ int main(int argc, char **argv)
 
     int LOAD_PREVIOUS_POSE_GRAPH;
     LOAD_PREVIOUS_POSE_GRAPH = fsSettings["load_previous_pose_graph"];
-    VINS_RESULT_PATH = VINS_RESULT_PATH + "/vio_loop.csv";
-    std::ofstream fout(VINS_RESULT_PATH, std::ios::out);
+    string vins_result_path = VINS_RESULT_PATH + "/vio_loop.csv";
+    std::ofstream fout(vins_result_path, std::ios::out);
     fout.close();
 
     int USE_IMU = fsSettings["imu"];
@@ -673,6 +722,10 @@ int main(int argc, char **argv)
     posegraph.startTFThread();
 
     ros::spin();
-
+    
+    if (measurement_process.joinable())
+        measurement_process.join();   
+    if (keyboard_command_process.joinable())
+        keyboard_command_process.join();  
     return 0;
 }

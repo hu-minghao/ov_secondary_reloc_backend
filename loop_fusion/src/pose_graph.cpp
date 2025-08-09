@@ -10,6 +10,15 @@
  *******************************************************/
 
 #include "pose_graph.h"
+#include <unordered_set>
+#include <limits>
+#include <pcl/point_types.h>
+#include <pcl/point_cloud.h>
+#include <pcl/io/pcd_io.h>
+#include <pcl/visualization/pcl_visualizer.h>
+#include <pcl/common/common.h>
+#include <pcl_conversions/pcl_conversions.h>  // pcl::toROSMsg
+#include <sensor_msgs/PointCloud2.h>
 
 PoseGraph::PoseGraph()
 {
@@ -49,6 +58,7 @@ void PoseGraph::registerPub(ros::NodeHandle &n)
     pub_pg_path = n.advertise<nav_msgs::Path>("pose_graph_path", 1000);
     pub_base_path = n.advertise<nav_msgs::Path>("base_path", 1000);
     pub_pose_graph = n.advertise<visualization_msgs::MarkerArray>("pose_graph", 1000);
+    pub_map_points =  n.advertise<sensor_msgs::PointCloud2>("map_points", 1, true);
     for (int i = 1; i < 10; i++)
         pub_path[i] = n.advertise<nav_msgs::Path>("path_" + to_string(i), 1000);
 }
@@ -133,6 +143,7 @@ void PoseGraph::addKeyFrame(const KeyFramePtr &cur_kf, bool flag_detect_loop)
             relative_q = (cur_kf->getLoopRelativeQ()).toRotationMatrix();
             w_P_cur = w_R_old * relative_t + w_P_old;
             w_R_cur = w_R_old * relative_q;
+
             double shift_yaw;
             Matrix3d shift_r;
             Vector3d shift_t;
@@ -147,8 +158,10 @@ void PoseGraph::addKeyFrame(const KeyFramePtr &cur_kf, bool flag_detect_loop)
             // shift vio pose of whole sequence to the world frame
             if (old_kf->sequence != cur_kf->sequence && sequence_loop[cur_kf->sequence] == 0)
             {
-                relocalization = !isMappingMode();
-                printf("relocalization success\n");
+                if(!isMappingMode()){
+                    relocation_ = true;
+                    printf("relocation success\n");
+                }
                 w_r_vio = shift_r;
                 w_t_vio = shift_t;
                 vio_P_cur = w_r_vio * vio_P_cur + w_t_vio;
@@ -255,7 +268,7 @@ void PoseGraph::addKeyFrame(const KeyFramePtr &cur_kf, bool flag_detect_loop)
     }
     publish();
     m_keyframelist.unlock();
-    printf("HMH,system mode %d, relocalization %d  loop_index %d \n", (int)mode, relocalization, loop_index);
+    printf("system mode %d, relocation_ %d  loop_index %d \n", (int)mode, relocation_, loop_index);
 }
 
 void PoseGraph::loadKeyFrame(const KeyFramePtr &cur_kf, bool flag_detect_loop)
@@ -364,9 +377,9 @@ int PoseGraph::detectLoop(const KeyFramePtr& keyframe, int frame_index)
     // first query; then add this frame into database!
     QueryResults ret;
     TicToc t_query;
-    int max_frame_id_allowed = std::max(0, frame_index - RECALL_IGNORE_RECENT_COUNT);
+    unsigned int max_frame_id_allowed = std::max(0, frame_index - RECALL_IGNORE_RECENT_COUNT);
     db.query(keyframe->brief_descriptors, ret, 3, max_frame_id_allowed);
-    printf("[POSEGRAPH]: query time: %f", t_query.toc());
+    printf("[POSEGRAPH]: query time: %f \n", t_query.toc());
     cout << "Searching for Image " << frame_index << ". " << ret << endl;
 
     TicToc t_add;
@@ -376,7 +389,7 @@ int PoseGraph::detectLoop(const KeyFramePtr& keyframe, int frame_index)
     }
     // printf("[POSEGRAPH]: add feature time: %f", t_add.toc());
     //  ret[0] is the nearest neighbour's score. threshold change with neighour score
-    bool find_loop = false;
+    // bool find_loop = false;
     cv::Mat loop_result;
     if (DEBUG_IMAGE)
     {
@@ -398,7 +411,7 @@ int PoseGraph::detectLoop(const KeyFramePtr& keyframe, int frame_index)
     }
 
     for (unsigned int i = 0; i < ret.size(); i++)
-        cout << "HMH " << i << " - " << ret[i].Score << endl;
+        cout << "  " << i << " - " << ret[i].Score << endl;
 
     // a good match with its nerghbour
     // if (ret.size() >= 1 && ret[0].Score > MIN_SCORE)
@@ -408,7 +421,7 @@ int PoseGraph::detectLoop(const KeyFramePtr& keyframe, int frame_index)
             // if (ret[i].Score > ret[0].Score * 0.3)
             if (ret[i].Score > MIN_SCORE && ret[i].Id < max_frame_id_allowed)
             {
-                find_loop = true;
+                // find_loop = true;
                 int tmp_index = ret[i].Id;
                 if (DEBUG_IMAGE && 0)
                 {
@@ -428,7 +441,6 @@ int PoseGraph::detectLoop(const KeyFramePtr& keyframe, int frame_index)
         }
     */
     // if (find_loop && frame_index > 50)
-    printf("HMH, frame_index %d \n", frame_index);
     if (frame_index < 50 && isMappingMode())
         return -1;
 
@@ -438,7 +450,7 @@ int PoseGraph::detectLoop(const KeyFramePtr& keyframe, int frame_index)
     {
 
         // First find the oldest that we have not tried yet
-        int min_index = INFINITY;
+        unsigned int min_index = std::numeric_limits<unsigned int>::max();
         bool has_min = false;
         for (unsigned int i = 0; i < ret.size(); i++)
         {
@@ -477,12 +489,12 @@ void PoseGraph::addKeyFrameIntoVoc(const KeyFramePtr& keyframe)
         image_pool[keyframe->index] = compressed_image;
     }
 
-    db.add(keyframe->brief_descriptors);
+    db.add(keyframe->window_brief_descriptors);
 }
 
 void PoseGraph::optimize4DoF()
 {
-    while (true)
+    while (!stop_.load())
     {
         int cur_index = -1;
         int first_looped_index = -1;
@@ -496,17 +508,14 @@ void PoseGraph::optimize4DoF()
         m_optimize_buf.unlock();
         if (cur_index != -1)
         {
-            printf("[POSEGRAPH]: optimize pose graph ,keyframelist size %zu \n",keyframelist.size());
             TicToc tmp_t1;
             m_keyframelist.lock();
             KeyFramePtr cur_kf = getKeyFrame(cur_index);
             if (NULL == cur_kf)
             {
-                printf("[POSEGRAPH]:cur_kf is NULL,pass \n");
                 m_keyframelist.unlock();
                 continue;
             }
-            printf("[POSEGRAPH]:cur_kf not NULL, continue \n");
             int max_length = cur_index + 1;
 
             // w^t_i   w^q_i
@@ -533,11 +542,8 @@ void PoseGraph::optimize4DoF()
             int i = 0;
             for (it = keyframelist.begin(); it != keyframelist.end(); it++)
             {
-                printf("[POSEGRAPH]: first for loop \n");
-                
                 if ((*it)->index < first_looped_index)
                     continue;
-                printf("curr index %d \n",i);
                 (*it)->local_index = i;
                 Quaterniond tmp_q;
                 Matrix3d tmp_r;
@@ -568,7 +574,6 @@ void PoseGraph::optimize4DoF()
                 // add edge
                 for (int j = 1; j < 5; j++)
                 {
-                printf("add edge \n");
                     if (i - j >= 0 && sequence_array[i] == sequence_array[i - j])
                     {
                         Vector3d euler_conncected = Utility::R2ypr(q_array[i - j].toRotationMatrix());
@@ -587,7 +592,6 @@ void PoseGraph::optimize4DoF()
                 // add loop edge
                 if ((*it)->has_loop)
                 {
-                printf("add loop edge \n");
                     assert((*it)->loop_index >= first_looped_index);
                     int connected_index = getKeyFrame((*it)->loop_index)->local_index;
                     Vector3d euler_conncected = Utility::R2ypr(q_array[connected_index].toRotationMatrix());
@@ -608,7 +612,6 @@ void PoseGraph::optimize4DoF()
             }
             m_keyframelist.unlock();
             double t_create = tmp_t1.toc();
-            printf("begin solve \n");
             TicToc tmp_t2;
             ceres::Solve(options, &problem, &summary);
             double t_opt = tmp_t2.toc();
@@ -667,7 +670,7 @@ void PoseGraph::optimize4DoF()
             double t_update = tmp_t3.toc();
 
             // Nice debug print
-            printf("HMH,[POSEGRAPH]: creation %.3f ms | optimization %.3f ms | update %.3f ms | %.3f dyaw, %.3f dpos\n", t_create, t_opt, t_update, yaw_drift, t_drift.norm());
+            printf(" ,[POSEGRAPH]: creation %.3f ms | optimization %.3f ms | update %.3f ms | %.3f dyaw, %.3f dpos\n", t_create, t_opt, t_update, yaw_drift, t_drift.norm());
         }
 
         std::chrono::milliseconds dura(2000);
@@ -678,7 +681,7 @@ void PoseGraph::optimize4DoF()
 
 void PoseGraph::optimize6DoF()
 {
-    while (true)
+    while (!stop_.load())
     {
         int cur_index = -1;
         int first_looped_index = -1;
@@ -972,6 +975,9 @@ void PoseGraph::savePoseGraph()
     string file_path = POSE_GRAPH_SAVE_PATH + "pose_graph.txt";
     pFile = fopen(file_path.c_str(), "w");
     // fprintf(pFile, "index time_stamp Tx Ty Tz Qw Qx Qy Qz loop_index loop_info\n");
+    // 已保存过的点 ID
+    std::unordered_set<double> saved_ids;
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>);
     list<KeyFramePtr >::iterator it;
     for (it = keyframelist.begin(); it != keyframelist.end(); it++)
     {
@@ -986,6 +992,10 @@ void PoseGraph::savePoseGraph()
         Vector3d VIO_tmp_T = (*it)->vio_T_w_i;
         Vector3d PG_tmp_T = (*it)->T_w_i;
 
+        if((*it)->window_brief_descriptors.empty()){
+            continue;
+        }
+
         fprintf(pFile, " %d %f %f %f %f %f %f %f %f %f %f %f %f %f %f %f %d %f %f %f %f %f %f %f %f %d\n", (*it)->index, (*it)->time_stamp,
                 VIO_tmp_T.x(), VIO_tmp_T.y(), VIO_tmp_T.z(),
                 PG_tmp_T.x(), PG_tmp_T.y(), PG_tmp_T.z(),
@@ -994,31 +1004,107 @@ void PoseGraph::savePoseGraph()
                 (*it)->loop_index,
                 (*it)->loop_info(0), (*it)->loop_info(1), (*it)->loop_info(2), (*it)->loop_info(3),
                 (*it)->loop_info(4), (*it)->loop_info(5), (*it)->loop_info(6), (*it)->loop_info(7),
-                (int)(*it)->keypoints.size());
+                (int)(*it)->point_2d_uv.size());
 
         // write keypoints, brief_descriptors   vector<cv::KeyPoint> keypoints vector<BRIEF::bitset> brief_descriptors;
-        assert((*it)->keypoints.size() == (*it)->brief_descriptors.size());
+        // printf("2d uv size %zu ,window_brief_descriptors size %zu \n",(*it)->point_2d_uv.size(),(*it)->window_brief_descriptors.size());
+        assert((*it)->point_2d_uv.size() == (*it)->window_brief_descriptors.size());
         brief_path = POSE_GRAPH_SAVE_PATH + to_string((*it)->index) + "_briefdes.dat";
         std::ofstream brief_file(brief_path, std::ios::binary);
         keypoints_path = POSE_GRAPH_SAVE_PATH + to_string((*it)->index) + "_keypoints.txt";
         FILE *keypoints_file;
         keypoints_file = fopen(keypoints_path.c_str(), "w");
-        for (int i = 0; i < (int)(*it)->keypoints.size(); i++)
+        // int uv_size = static_cast<int>((*it)->point_2d_uv.size());
+        for (int i = 0; i < (int)(*it)->point_2d_uv.size(); i++)
         {
-            brief_file << (*it)->brief_descriptors[i] << endl;
-            fprintf(keypoints_file, "%f %f %f %f\n", (*it)->keypoints[i].pt.x, (*it)->keypoints[i].pt.y,
-                    (*it)->keypoints_norm[i].pt.x, (*it)->keypoints_norm[i].pt.y);
+            brief_file << (*it)->window_brief_descriptors[i] << endl;
+            // float pt_id = i > uv_size? -1.0 : (*it)->point_id[i];
+            fprintf(keypoints_file, "%f %f %f %f %f\n", (*it)->point_2d_uv[i].x, (*it)->point_2d_uv[i].y,
+                    (*it)->point_2d_norm[i].x, (*it)->point_2d_norm[i].y,(*it)->point_id[i]);
         }
         brief_file.close();
         fclose(keypoints_file);
+
+        const auto& pts = (*it)->point_3d;
+        const auto& ids = (*it)->point_id;
+        if (pts.size() != ids.size()) {
+            std::cerr << "KeyFrame has mismatched point_3d and point_id sizes!" << std::endl;
+            continue;
+        }
+        for (size_t i = 0; i < pts.size(); ++i) {
+            double id = ids[i];
+            if (saved_ids.find(id) != saved_ids.end()) {
+                continue;
+            }
+
+            const cv::Point3f& pt = pts[i];
+            pcl::PointXYZI pcl_point;
+            pcl_point.x = pt.x;
+            pcl_point.y = pt.y;
+            pcl_point.z = pt.z;
+            pcl_point.intensity = static_cast<float>(id);  // 使用 intensity 存储 id
+            cloud->points.push_back(pcl_point);
+
+            saved_ids.insert(id);
+        }
+
     }
     fclose(pFile);
+    cloud->width = cloud->points.size();
+    cloud->height = 1;
+    cloud->is_dense = false;
+    string pcd_file_name = VINS_RESULT_PATH + "/keyframes_point3d.pcd";
+    std::cout<<"pcd point cloud save path "<<pcd_file_name<<std::endl;
+    pcl::visualization::PCLVisualizer::Ptr viewer(new pcl::visualization::PCLVisualizer("Point Cloud Viewer"));
+    viewer->setBackgroundColor(0, 0, 0);
+
+    // 创建颜色处理器：根据 intensity 映射颜色
+    pcl::visualization::PointCloudColorHandlerGenericField<pcl::PointXYZI> color_handler(cloud, "intensity");
+    if (!color_handler.isCapable()) {
+        std::cerr << "Color handler not capable. Showing in white." << std::endl;
+        pcl::visualization::PointCloudColorHandlerCustom<pcl::PointXYZI> white(cloud, 255, 255, 255);
+        viewer->addPointCloud<pcl::PointXYZI>(cloud, white, "cloud");
+    } else {
+        viewer->addPointCloud<pcl::PointXYZI>(cloud, color_handler, "cloud");
+    }
+
+    viewer->setPointCloudRenderingProperties(pcl::visualization::PCL_VISUALIZER_POINT_SIZE, 3, "cloud");
+    viewer->addCoordinateSystem(1.0);
+    viewer->initCameraParameters();
+
+    // 可视化主循环
+    while (!viewer->wasStopped()) {
+        viewer->spinOnce(100);
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    if (pcl::io::savePCDFileBinary(pcd_file_name, *cloud) == 0) {
+        std::cout << "Saved " << cloud->points.size() << " unique points to " << pcd_file_name << std::endl;
+    } else {
+        std::cerr << "Failed to save PCD file: " << pcd_file_name << std::endl;
+    }
 
     printf("[POSEGRAPH]: save pose graph time: %f s\n", tmp_t.toc() / 1000);
     m_keyframelist.unlock();
 }
 void PoseGraph::loadPoseGraph()
 {
+    id_point_map.clear();
+    pcl::PointCloud<pcl::PointXYZI>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZI>);
+    string pcd_file_name = VINS_RESULT_PATH + "keyframes_point3d.pcd";
+    if (pcl::io::loadPCDFile<pcl::PointXYZI>(pcd_file_name, *cloud) == -1) {
+        std::cerr << "Failed to load PCD file: " << pcd_file_name << std::endl;
+    }
+
+
+    for (const auto& pt : cloud->points) {
+        int id = static_cast<int>(pt.intensity);  // 将 intensity 作为 ID
+        cv::Point3f position(pt.x, pt.y, pt.z);
+        // std::cout<<"id "<<id<<" pt: "<<pt.x<<" "<<pt.y<<" "<<pt.z<<std::endl;
+        id_point_map[id] = position;  // 如果已有相同 ID，会被覆盖
+    }
+    std::cout << "Loaded " << cloud->size() << " points from " << pcd_file_name << std::endl;
+
+    
     TicToc tmp_t;
     FILE *pFile;
     string file_path = POSE_GRAPH_SAVE_PATH + "pose_graph.txt";
@@ -1097,35 +1183,51 @@ void PoseGraph::loadPoseGraph()
 
         // load keypoints, brief_descriptors
         string brief_path = POSE_GRAPH_SAVE_PATH + to_string(index) + "_briefdes.dat";
+        std::ifstream file(brief_path);
+        if (!file.good()) {
+          // 文件不存在或无法打开
+           continue;
+        }
         std::ifstream brief_file(brief_path, std::ios::binary);
         string keypoints_path = POSE_GRAPH_SAVE_PATH + to_string(index) + "_keypoints.txt";
         FILE *keypoints_file;
         keypoints_file = fopen(keypoints_path.c_str(), "r");
-        vector<cv::KeyPoint> keypoints;
-        vector<cv::KeyPoint> keypoints_norm;
+        vector<cv::Point2f> keypoints;
+        vector<cv::Point2f> keypoints_norm;
+        vector<cv::Point3f> point_3d;
         vector<BRIEF::bitset> brief_descriptors;
         for (int i = 0; i < keypoints_num; i++)
         {
             BRIEF::bitset tmp_des;
             brief_file >> tmp_des;
             brief_descriptors.push_back(tmp_des);
-            cv::KeyPoint tmp_keypoint;
-            cv::KeyPoint tmp_keypoint_norm;
-            double p_x, p_y, p_x_norm, p_y_norm;
-            if (!fscanf(keypoints_file, "%lf %lf %lf %lf", &p_x, &p_y, &p_x_norm, &p_y_norm))
+            double p_x, p_y, p_x_norm, p_y_norm, point_id;
+            if (!fscanf(keypoints_file, "%lf %lf %lf %lf %lf", &p_x, &p_y, &p_x_norm, &p_y_norm, &point_id))
                 printf("[POSEGRAPH]:  fail to load pose graph \n");
-            tmp_keypoint.pt.x = p_x;
-            tmp_keypoint.pt.y = p_y;
-            tmp_keypoint_norm.pt.x = p_x_norm;
-            tmp_keypoint_norm.pt.y = p_y_norm;
+            cv::Point2f tmp_keypoint;
+            cv::Point2f tmp_keypoint_norm;
+            tmp_keypoint.x = p_x;
+            tmp_keypoint.y = p_y;
+            tmp_keypoint_norm.x = p_x_norm;
+            tmp_keypoint_norm.y = p_y_norm;
             keypoints.push_back(tmp_keypoint);
             keypoints_norm.push_back(tmp_keypoint_norm);
+            auto it = id_point_map.find(static_cast<int>(point_id));
+            if(it != id_point_map.end()){
+                point_3d.emplace_back(it->second);
+            }
+        }
+        if(point_3d.size() != static_cast<long unsigned int>(keypoints_num)){
+            point_3d.clear();
         }
         brief_file.close();
         fclose(keypoints_file);
 
-        KeyFramePtr keyframe = std::make_shared<KeyFrame>(time_stamp, index, VIO_T, VIO_R, PG_T, PG_R, image, loop_index, loop_info, keypoints, keypoints_norm, brief_descriptors);
-        loadKeyFrame(keyframe, 0);
+        KeyFramePtr keyframe = std::make_shared<KeyFrame>(time_stamp, index, VIO_T, VIO_R, PG_T, PG_R, image, 
+                                loop_index, loop_info, keypoints, keypoints_norm, brief_descriptors, point_3d);
+        if(!keyframe->point_3d.empty()){
+            loadKeyFrame(keyframe, 0);
+        }
         if (cnt % 20 == 0)
         {
             publish();
@@ -1135,6 +1237,15 @@ void PoseGraph::loadPoseGraph()
     fclose(pFile);
     printf("[POSEGRAPH]: load pose graph time: %f s\n", tmp_t.toc() / 1000);
     base_sequence = 0;
+
+    sensor_msgs::PointCloud2 cloud_msg;
+    pcl::toROSMsg(*cloud, cloud_msg);
+    cloud_msg.header.frame_id = "map";  // 指定坐标系
+    cloud_msg.header.stamp = ros::Time::now();
+
+    // 3. 发布
+    pub_map_points.publish(cloud_msg);
+    ROS_INFO("publish map points end \n");
 }
 
 void PoseGraph::publish()
@@ -1180,7 +1291,7 @@ void PoseGraph::pubTFThread()
 
     ros::Time last_pub_time = ros::Time::now();
 
-    while (thread_run)
+    while (thread_run && !stop_.load())
     {
         ros::Time now = ros::Time::now();
         double dt = (now - last_pub_time).toSec();
