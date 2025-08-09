@@ -1,26 +1,3 @@
-# Improved OpenVINS Secondary relocalization
-
-
-This is an extension of the original ov_secondary.Save the global coordinates of the feature points, and use the saved 3D point cloud and the 2D feature points of the current frame for PNP to obtain the current loop position when relocalizing. Compared with the original version, the initial relocalization can also be completed when the camera is completely static, solving the problem the current frame 3D point cloud cannot be generated in a static state but needs to be relocalized.
-
-
-在euroc数据集上效果演示:
-
-
-![relocalization](./data/ov_sencondary_reloc.png "demo")
-
-## Welcome to continuous improvement
-
-
-欢迎对该仓库做优化改进，我会定时检查问题及PR
-
-
-最后, 本仓库仅供学习交流使用，如果你觉得有用，也请不吝啬给颗小星星~
-
-
-
-
-
 # OpenVINS Secondary Pose Graph Example
 
 
